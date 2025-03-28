@@ -1,55 +1,53 @@
-name: Build Aseprite for Windows
-
-on:
-  workflow_dispatch: # 允许手动触发构建
-
+name: build
+on: [push, pull_request, workflow_dispatch]
 jobs:
   build:
-    runs-on: windows-latest
-
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        build_type: [Release]
+        enable_ui: [on]
+        include:
+          - os: windows-latest
+            build_type: Release
+            enable_ui: on
     steps:
-      - name: 检出 Aseprite 源码
-        uses: actions/checkout@v4
-        with:
-          repository: aseprite/aseprite
-          submodules: recursive
-
-      - name: 安装 vcpkg 和依赖项
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git
-          cd vcpkg
-          .\bootstrap-vcpkg.bat
-          .\vcpkg install freetype giflib libpng jpeg-turbo jsoncpp curl
-        shell: cmd
-
-      - name: 获取并编译 Skia
-        run: |
-          git clone -b aseprite-m81 https://github.com/aseprite/skia.git
-          cd skia
-          ./tools/git-sync-deps
-          mkdir build && cd build
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
-          ninja
-        shell: bash
-
-      - name: 编译 Aseprite
-        run: |
-          mkdir build && cd build
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DSKIA_DIR=../skia -DSKIA_LIBRARY_DIR=../skia/build/out/Release \
-            -DSKIA_LIBRARY=../skia/build/out/Release/skia.lib -DWITH_SKIA=ON ..
-          ninja aseprite
-        shell: bash
-
-      - name: 打包可执行文件
-        run: |
-          mkdir artifact
-          copy build\bin\aseprite.exe artifact\
-          tar -czf aseprite-windows.tar.gz -C artifact .
-        shell: cmd
-
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: aseprite-build-windows
-          path: aseprite-windows.tar.gz
+    - uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1
+      if: runner.os == 'Linux'
+      with:
+        key: ${{ matrix.os }}-${{ matrix.enable_ui }}
+    - uses: seanmiddleditch/gha-setup-ninja@master
+    - uses: ilammy/msvc-dev-cmd@v1
+      if: runner.os == 'Windows'
+    - name: Generating Makefiles
+      shell: bash
+      run: |
+        export enable_ccache=off
+        curl -L https://github.com/blueloveTH/aseprite/releases/download/v0.01/skia.zip --output skia.zip
+        curl -L https://github.com/blueloveTH/aseprite/releases/download/v0.01/libcrypto-1_1-x64.dll --output libcrypto-1_1-x64.dll
+        7z x skia.zip
+        cmake -S . -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DENABLE_UI=${{ matrix.enable_ui }} \
+          -DENABLE_CCACHE=$enable_ccache \
+          -DLAF_BACKEND=skia \
+          -DSKIA_DIR=./skia \
+          -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
+          -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
+    - name: Compiling
+      shell: bash
+      run: |
+        cd build && ninja
+    - uses: actions/upload-artifact@v3
+      with:
+        name: aseprite
+        path: |
+          libcrypto-1_1-x64.dll
+          D:/a/aseprite/aseprite/build/bin/data
+          D:/a/aseprite/aseprite/build/bin/aseprite.exe
